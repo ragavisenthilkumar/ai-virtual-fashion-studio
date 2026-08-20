@@ -9,11 +9,17 @@ import GarmentUpload from "./components/GarmentUpload";
 import ProcessingStatus from "./components/ProcessingStatus";
 import TryOnResult from "./components/TryOnResult";
 import History from "./components/History";
+import ResetPassword from "./components/ResetPassword";
 
 const API_URL =
-  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+  import.meta.env.VITE_API_URL ||
+  "https://ai-fashion-api-2026.onrender.com";
 
 function App() {
+  const resetToken = new URLSearchParams(
+    window.location.search
+  ).get("reset-token");
+
   const [user, setUser] = useState(
     localStorage.getItem("fashionUser")
   );
@@ -44,17 +50,29 @@ function App() {
     );
   }, [history]);
 
+  // ==========================================================
+  // LOGIN
+  // ==========================================================
+
   const handleLogin = (email) => {
     localStorage.setItem("fashionUser", email);
     setUser(email);
     setPage("home");
   };
 
+  // ==========================================================
+  // SIGNUP
+  // ==========================================================
+
   const handleSignup = (name) => {
     localStorage.setItem("fashionUser", name);
     setUser(name);
     setPage("home");
   };
+
+  // ==========================================================
+  // LOGOUT
+  // ==========================================================
 
   const handleLogout = () => {
     localStorage.removeItem("fashionUser");
@@ -65,6 +83,10 @@ function App() {
     setResult(null);
     setError("");
   };
+
+  // ==========================================================
+  // RESET TRY-ON
+  // ==========================================================
 
   const handleReset = () => {
     setPersonImage(null);
@@ -77,6 +99,10 @@ function App() {
       behavior: "smooth",
     });
   };
+
+  // ==========================================================
+  // VIRTUAL TRY-ON
+  // ==========================================================
 
   const handleTryOn = async () => {
     if (!personImage) {
@@ -96,19 +122,39 @@ function App() {
     try {
       const formData = new FormData();
 
-      formData.append("person_image", personImage);
+      // IMPORTANT:
+      // These names MUST match FastAPI.
+      formData.append("user_image", personImage);
       formData.append("garment_image", garmentImage);
 
-      const response = await fetch(`${API_URL}/try-on`, {
-        method: "POST",
-        body: formData,
-      });
+      console.log("Sending request to:", `${API_URL}/try-on`);
+
+      const response = await fetch(
+        `${API_URL}/try-on`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      console.log(
+        "Backend status:",
+        response.status
+      );
 
       if (!response.ok) {
-        let message = "Virtual try-on failed.";
+        let message =
+          "Virtual try-on failed.";
 
         try {
-          const errorData = await response.json();
+          const errorData =
+            await response.json();
+
+          console.error(
+            "Backend error:",
+            errorData
+          );
+
           message =
             errorData.detail ||
             errorData.message ||
@@ -121,26 +167,71 @@ function App() {
       }
 
       const contentType =
-        response.headers.get("content-type") || "";
+        response.headers.get(
+          "content-type"
+        ) || "";
 
       let resultUrl;
 
-      if (contentType.includes("application/json")) {
-        const data = await response.json();
+      // ======================================================
+      // JSON RESPONSE
+      // ======================================================
+
+      if (
+        contentType.includes(
+          "application/json"
+        )
+      ) {
+        const data =
+          await response.json();
+
+        console.log(
+          "Backend response:",
+          data
+        );
+
+        // Your FastAPI backend returns:
+        //
+        // {
+        //   "result": {
+        //      "url": "/uploads/results/...",
+        //      "download_url": "/uploads/results/..."
+        //   }
+        // }
 
         resultUrl =
+          data.result?.url ||
+          data.result?.download_url ||
           data.image_url ||
           data.result_url ||
           data.output_url ||
           data.url;
 
-        if (!resultUrl && data.image) {
-          resultUrl = `data:image/png;base64,${data.image}`;
+        // Base64 fallback
+        if (
+          !resultUrl &&
+          data.image
+        ) {
+          resultUrl =
+            `data:image/png;base64,${data.image}`;
         }
-      } else {
-        const blob = await response.blob();
-        resultUrl = URL.createObjectURL(blob);
       }
+
+      // ======================================================
+      // IMAGE/BLOB RESPONSE
+      // ======================================================
+
+      else {
+        const blob =
+          await response.blob();
+
+        resultUrl =
+          URL.createObjectURL(blob);
+      }
+
+      // ======================================================
+      // CHECK RESULT
+      // ======================================================
 
       if (!resultUrl) {
         throw new Error(
@@ -148,45 +239,103 @@ function App() {
         );
       }
 
+      // ======================================================
+      // CONVERT RELATIVE URL
+      // ======================================================
+
       if (
         resultUrl.startsWith("/") &&
         !resultUrl.startsWith("//")
       ) {
-        resultUrl = `${API_URL}${resultUrl}`;
+        resultUrl =
+          `${API_URL}${resultUrl}`;
       }
 
+      console.log(
+        "Final result image:",
+        resultUrl
+      );
+
+      // ======================================================
+      // DISPLAY RESULT
+      // ======================================================
+
       setResult(resultUrl);
+
+      // ======================================================
+      // SAVE HISTORY
+      // ======================================================
 
       setHistory((previous) => [
         {
           image: resultUrl,
-          date: new Date().toLocaleString(),
+          date:
+            new Date().toLocaleString(),
         },
         ...previous,
       ]);
+
     } catch (err) {
-      console.error(err);
+      console.error(
+        "TRY-ON ERROR:",
+        err
+      );
 
       setError(
         err.message ||
           "Something went wrong while generating the try-on."
       );
+
     } finally {
       setProcessing(false);
     }
   };
 
+  // ==========================================================
+  // CLEAR HISTORY
+  // ==========================================================
+
   const clearHistory = () => {
     setHistory([]);
-    localStorage.removeItem("tryOnHistory");
+
+    localStorage.removeItem(
+      "tryOnHistory"
+    );
   };
+
+  // ==========================================================
+  // RESET PASSWORD
+  // ==========================================================
+
+  if (resetToken) {
+    return (
+      <ResetPassword
+        token={resetToken}
+        onBackToLogin={() => {
+          window.history.replaceState(
+            {},
+            document.title,
+            window.location.pathname
+          );
+
+          window.location.reload();
+        }}
+      />
+    );
+  }
+
+  // ==========================================================
+  // LOGIN / SIGNUP
+  // ==========================================================
 
   if (!user) {
     if (page === "signup") {
       return (
         <Signup
           onSignup={handleSignup}
-          onLogin={() => setPage("login")}
+          onLogin={() =>
+            setPage("login")
+          }
         />
       );
     }
@@ -194,29 +343,46 @@ function App() {
     return (
       <Login
         onLogin={handleLogin}
-        onSignup={() => setPage("signup")}
+        onSignup={() =>
+          setPage("signup")
+        }
       />
     );
   }
 
+  // ==========================================================
+  // MAIN APP
+  // ==========================================================
+
   return (
     <div className="app">
+
       <Navbar
         user={user}
         onLogout={handleLogout}
-        onHome={() => setPage("home")}
-        onHistory={() => setPage("history")}
+        onHome={() =>
+          setPage("home")
+        }
+        onHistory={() =>
+          setPage("history")
+        }
       />
 
       {page === "history" ? (
+
         <History
           history={history}
           onClear={clearHistory}
         />
+
       ) : (
+
         <main className="main-container">
+
           <section className="hero-section">
+
             <div>
+
               <span className="hero-badge">
                 ✨ AI POWERED FASHION
               </span>
@@ -228,15 +394,20 @@ function App() {
               </h1>
 
               <p>
-                Upload your photo and a garment image.
-                Our AI will visualize how the outfit
+                Upload your photo and a
+                garment image. Our AI will
+                visualize how the outfit
                 looks on you.
               </p>
+
             </div>
+
           </section>
 
           <section className="tryon-section">
+
             <div className="upload-grid">
+
               <ImageUpload
                 image={personImage}
                 setImage={setPersonImage}
@@ -246,6 +417,7 @@ function App() {
                 garment={garmentImage}
                 setGarment={setGarmentImage}
               />
+
             </div>
 
             <button
@@ -271,9 +443,13 @@ function App() {
               result={result}
               onReset={handleReset}
             />
+
           </section>
+
         </main>
+
       )}
+
     </div>
   );
 }
