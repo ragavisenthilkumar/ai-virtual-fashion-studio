@@ -1,4 +1,3 @@
-```jsx
 import React, { useState } from "react";
 
 const API_URL =
@@ -12,24 +11,24 @@ function ResetPassword({ token, onBackToLogin }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const handleResetPassword = async (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     setError("");
     setMessage("");
 
     if (!password || !confirmPassword) {
-      setError("Please enter and confirm your new password.");
-      return;
-    }
-
-    if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+      setError("Please enter both password fields.");
       return;
     }
 
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
+      return;
+    }
+
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
       return;
     }
 
@@ -44,7 +43,7 @@ function ResetPassword({ token, onBackToLogin }) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            token: token,
+            token,
             new_password: password,
           }),
         }
@@ -54,24 +53,24 @@ function ResetPassword({ token, onBackToLogin }) {
 
       if (!response.ok) {
         throw new Error(
-          data.detail || "Unable to reset password."
+          data.detail ||
+            data.message ||
+            "Password reset failed."
         );
       }
 
       setMessage(
-        data.message ||
-          "Password reset successfully."
+        "Password reset successfully. You can now login."
       );
 
       setPassword("");
       setConfirmPassword("");
-
     } catch (err) {
-      console.error("Reset password error:", err);
+      console.error(err);
 
       setError(
         err.message ||
-          "Unable to connect to the backend."
+          "Something went wrong. Please try again."
       );
     } finally {
       setLoading(false);
@@ -81,55 +80,46 @@ function ResetPassword({ token, onBackToLogin }) {
   return (
     <div className="auth-container">
       <div className="auth-card">
-
-        <div className="auth-icon">🔐</div>
-
         <h1>Reset Password</h1>
 
         <p>
           Enter your new password below.
         </p>
 
-        <form onSubmit={handleResetPassword}>
-
-          <label>New Password</label>
-
+        <form onSubmit={handleSubmit}>
           <input
             type="password"
-            placeholder="Enter new password"
+            placeholder="New password"
             value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              setError("");
-            }}
+            onChange={(e) =>
+              setPassword(e.target.value)
+            }
+            disabled={loading}
           />
-
-          <label>Confirm Password</label>
 
           <input
             type="password"
             placeholder="Confirm new password"
             value={confirmPassword}
-            onChange={(e) => {
-              setConfirmPassword(e.target.value);
-              setError("");
-            }}
+            onChange={(e) =>
+              setConfirmPassword(e.target.value)
+            }
+            disabled={loading}
           />
 
           {error && (
-            <div className="error-message">
+            <p className="error-message">
               {error}
-            </div>
+            </p>
           )}
 
           {message && (
-            <div className="success-message">
+            <p className="success-message">
               {message}
-            </div>
+            </p>
           )}
 
           <button
-            className="primary-btn"
             type="submit"
             disabled={loading}
           >
@@ -137,24 +127,17 @@ function ResetPassword({ token, onBackToLogin }) {
               ? "Resetting..."
               : "Reset Password"}
           </button>
-
         </form>
 
-        {message && (
-          <div className="back-login">
-            <button
-              type="button"
-              onClick={onBackToLogin}
-            >
-              ← Back to Login
-            </button>
-          </div>
-        )}
-
+        <button
+          type="button"
+          onClick={onBackToLogin}
+        >
+          Back to Login
+        </button>
       </div>
     </div>
   );
 }
 
 export default ResetPassword;
-```
