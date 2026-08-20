@@ -1,5 +1,5 @@
-fastapi
-uvicorn[standard]
-python-multipart
-pillow
-gradio_client
+fastapi==0.141.1
+uvicorn[standard]==0.52.3
+python-multipart==0.0.32
+pillow==12.3.0
+gradio_client==2.6.0
