@@ -20,5 +20,9 @@ dist/
 .DS_Store
 Thumbs.db
 # Generated and uploaded images
+# Generated and uploaded images
 backend/uploads/
 backend/generated/
+
+# Local database
+backend/users.db

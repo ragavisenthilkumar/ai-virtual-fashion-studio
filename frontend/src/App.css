@@ -616,3 +616,38 @@ html {
   }
 
 }
+.forgot-password {
+  text-align: right;
+  margin-top: -8px;
+  margin-bottom: 18px;
+}
+
+.forgot-password button,
+.back-login button {
+  background: none;
+  border: none;
+  color: #7c3aed;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+}
+
+.forgot-password button:hover,
+.back-login button:hover {
+  text-decoration: underline;
+}
+
+.success-message {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+  padding: 12px;
+  border-radius: 8px;
+  margin-bottom: 15px;
+  font-size: 14px;
+}
+
+.back-login {
+  text-align: center;
+  margin-top: 20px;
+}

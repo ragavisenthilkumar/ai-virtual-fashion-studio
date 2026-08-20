@@ -1,17 +1,90 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from pydantic import BaseModel, EmailStr, Field
+
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    DateTime
+)
+
+from sqlalchemy.orm import (
+    declarative_base,
+    sessionmaker,
+    Session
+)
+
+from passlib.context import CryptContext
+from jose import jwt
+from dotenv import load_dotenv
+
+from datetime import datetime, timedelta
 from pathlib import Path
 from PIL import Image, ImageOps
 from io import BytesIO
+from email.message import EmailMessage
 
+import os
+import smtplib
+import secrets
 import shutil
 import uuid
 import asyncio
 import re
 
 from gradio_client import Client, handle_file
+
+# ============================================================
+# ENVIRONMENT VARIABLES
+# ============================================================
+
+load_dotenv()
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+
+ALGORITHM = os.getenv(
+    "ALGORITHM",
+    "HS256"
+)
+
+ACCESS_TOKEN_EXPIRE_MINUTES = int(
+    os.getenv(
+        "ACCESS_TOKEN_EXPIRE_MINUTES",
+        "60"
+    )
+)
+
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    "http://localhost:5173"
+)
+
+SMTP_HOST = os.getenv("SMTP_HOST")
+
+SMTP_PORT = int(
+    os.getenv(
+        "SMTP_PORT",
+        "587"
+    )
+)
+
+SMTP_USERNAME = os.getenv("SMTP_USERNAME")
+
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
+
+SMTP_FROM = os.getenv(
+    "SMTP_FROM",
+    SMTP_USERNAME
+)
+
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY is missing from .env"
+    )
 
 
 # ============================================================
@@ -55,6 +128,203 @@ USER_DIR.mkdir(parents=True, exist_ok=True)
 GARMENT_DIR.mkdir(parents=True, exist_ok=True)
 RESULT_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+
+# ============================================================
+# AUTHENTICATION DATABASE
+# ============================================================
+
+DATABASE_URL = f"sqlite:///{BASE_DIR / 'users.db'}"
+
+engine = create_engine(
+    DATABASE_URL,
+    connect_args={"check_same_thread": False}
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine
+)
+
+Base = declarative_base()
+
+
+# ============================================================
+# USER MODEL
+# ============================================================
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True
+    )
+
+    name = Column(
+        String,
+        nullable=False
+    )
+
+    email = Column(
+        String,
+        unique=True,
+        index=True,
+        nullable=False
+    )
+
+    password_hash = Column(
+        String,
+        nullable=False
+    )
+
+    reset_token = Column(
+        String,
+        unique=True,
+        nullable=True
+    )
+
+    reset_token_expires = Column(
+        DateTime,
+        nullable=True
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+
+Base.metadata.create_all(bind=engine)
+
+
+# ============================================================
+# PASSWORD SECURITY
+# ============================================================
+
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto"
+)
+
+
+def hash_password(password: str):
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str):
+    return pwd_context.verify(
+        plain_password,
+        hashed_password
+    )
+
+
+# ============================================================
+# DATABASE SESSION
+# ============================================================
+
+def get_db():
+    db = SessionLocal()
+
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+# ============================================================
+# REQUEST MODELS
+# ============================================================
+
+class SignupRequest(BaseModel):
+    name: str = Field(
+        min_length=2,
+        max_length=100
+    )
+
+    email: EmailStr
+
+    password: str = Field(
+        min_length=6,
+        max_length=128
+    )
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+
+    password: str = Field(
+        min_length=1,
+        max_length=128
+    )
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+
+    new_password: str = Field(
+        min_length=6,
+        max_length=128
+    )
+
+
+# ============================================================
+# EMAIL FUNCTION
+# ============================================================
+
+def send_reset_email(
+    recipient_email: str,
+    reset_token: str
+):
+    reset_link = (
+        f"{FRONTEND_URL}"
+        f"/?reset-token={reset_token}"
+    )
+
+    message = EmailMessage()
+
+    message["Subject"] = (
+        "Reset your AI Virtual Fashion Studio password"
+    )
+
+    message["From"] = SMTP_FROM
+    message["To"] = recipient_email
+
+    message.set_content(
+        f"""Hello,
+
+We received a request to reset your password.
+
+Click the link below to create a new password:
+
+{reset_link}
+
+This link will expire in 30 minutes.
+
+If you did not request this password reset, you can ignore this email.
+
+AI Virtual Fashion Studio
+"""
+    )
+
+    with smtplib.SMTP(
+        SMTP_HOST,
+        SMTP_PORT
+    ) as server:
+
+        server.starttls()
+
+        server.login(
+            SMTP_USERNAME,
+            SMTP_PASSWORD
+        )
+
+        server.send_message(message)
 
 
 # ============================================================
@@ -583,7 +853,220 @@ def validate_person_image(
             )
         )
 
+# ============================================================
+# SIGNUP
+# ============================================================
 
+@app.post("/signup")
+async def signup(
+    data: SignupRequest,
+    db: Session = Depends(get_db)
+):
+    email = data.email.lower()
+
+    existing_user = (
+        db.query(User)
+        .filter(User.email == email)
+        .first()
+    )
+
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="An account with this email already exists."
+        )
+
+    new_user = User(
+        name=data.name.strip(),
+        email=email,
+        password_hash=hash_password(data.password)
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return {
+        "success": True,
+        "message": "Account created successfully.",
+        "user": {
+            "id": new_user.id,
+            "name": new_user.name,
+            "email": new_user.email
+        }
+    }
+
+
+# ============================================================
+# LOGIN
+# ============================================================
+
+@app.post("/login")
+async def login(
+    data: LoginRequest,
+    db: Session = Depends(get_db)
+):
+    email = data.email.lower()
+
+    user = (
+        db.query(User)
+        .filter(User.email == email)
+        .first()
+    )
+
+    if not user or not verify_password(
+        data.password,
+        user.password_hash
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid email or password."
+        )
+
+    access_token = jwt.encode(
+        {
+            "sub": str(user.id),
+            "email": user.email,
+            "exp": (
+                datetime.utcnow()
+                + timedelta(
+                    minutes=ACCESS_TOKEN_EXPIRE_MINUTES
+                )
+            )
+        },
+        SECRET_KEY,
+        algorithm=ALGORITHM
+    )
+
+    return {
+        "success": True,
+        "message": "Login successful.",
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": {
+            "id": user.id,
+            "name": user.name,
+            "email": user.email
+        }
+    }
+
+
+# ============================================================
+# FORGOT PASSWORD
+# ============================================================
+
+@app.post("/forgot-password")
+async def forgot_password(
+    data: ForgotPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    email = data.email.lower()
+
+    user = (
+        db.query(User)
+        .filter(User.email == email)
+        .first()
+    )
+
+    # Same response whether the email exists or not.
+    response = {
+        "success": True,
+        "message": (
+            "If an account exists with this email, "
+            "a password reset link has been sent."
+        )
+    }
+
+    if not user:
+        return response
+
+    reset_token = secrets.token_urlsafe(48)
+
+    user.reset_token = reset_token
+    user.reset_token_expires = (
+        datetime.utcnow()
+        + timedelta(minutes=30)
+    )
+
+    db.commit()
+
+    try:
+        send_reset_email(
+            user.email,
+            reset_token
+        )
+
+    except Exception as e:
+        print(
+            "PASSWORD RESET EMAIL ERROR:",
+            repr(e)
+        )
+
+        user.reset_token = None
+        user.reset_token_expires = None
+        db.commit()
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Unable to send password reset email. "
+                "Check your SMTP settings."
+            )
+        )
+
+    return response
+
+
+# ============================================================
+# RESET PASSWORD
+# ============================================================
+
+@app.post("/reset-password")
+async def reset_password(
+    data: ResetPasswordRequest,
+    db: Session = Depends(get_db)
+):
+    user = (
+        db.query(User)
+        .filter(
+            User.reset_token == data.token
+        )
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or already used reset link."
+        )
+
+    if (
+        not user.reset_token_expires
+        or user.reset_token_expires < datetime.utcnow()
+    ):
+        user.reset_token = None
+        user.reset_token_expires = None
+        db.commit()
+
+        raise HTTPException(
+            status_code=400,
+            detail="This reset link has expired."
+        )
+
+    user.password_hash = hash_password(
+        data.new_password
+    )
+
+    # Make the token unusable after resetting.
+    user.reset_token = None
+    user.reset_token_expires = None
+
+    db.commit()
+
+    return {
+        "success": True,
+        "message": "Password reset successfully. You can now log in."
+    }
 # ============================================================
 # ROOT
 # ============================================================
