@@ -44,6 +44,8 @@ from gradio_client import Client, handle_file
 
 load_dotenv()
 
+HF_TOKEN = os.getenv("HF_TOKEN")
+
 SECRET_KEY = os.getenv("SECRET_KEY")
 
 ALGORITHM = os.getenv(
@@ -1349,7 +1351,8 @@ async def virtual_try_on(
         )
 
         client = Client(
-            IDM_VTON_SPACE
+            IDM_VTON_SPACE,
+            hf_token=HF_TOKEN
         )
 
         print(
